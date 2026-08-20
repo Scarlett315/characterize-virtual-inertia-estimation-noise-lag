@@ -1,3 +1,5 @@
 /.vscode
 andes_env/
+out/
 archive/
+regf2_testbench_out.*
