@@ -12,9 +12,9 @@ _state = {'last_t': None,
           'ou_iq': 0.0}
 
 
-SIGMA_V, SIGMA_I, TAU_OU = 0.008, 0.02, 0.2
+#SIGMA_V, SIGMA_I, TAU_OU = 0.008, 0.02, 0.2
 STEP_TIME = 0.01 # 10 ms
-#SIGMA_V, SIGMA_I, TAU_OU = 0.8, 0.8, 0.2  # deviations
+SIGMA_V, SIGMA_I, TAU_OU = 0.008, 0.008, 0.2  # deviations
 
 
 # Orenstein-Uhlenbeck Simulation 
