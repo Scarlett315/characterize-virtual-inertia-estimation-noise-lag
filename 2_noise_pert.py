@@ -86,15 +86,6 @@ def pert(t, system):
         vq_n = system.REGF2.get(src='vq', attr='v', idx=uid)+ _state['ou_vq']
         Id_n = system.REGF2.get(src='Id', attr='v', idx=uid)+ _state['ou_id']
         Iq_n = system.REGF2.get(src='Iq', attr='v', idx=uid)+ _state['ou_iq']
-
-        # set variables
-        """
-        system.REGF2.set(src='vd', attr='v', idx=uid, value=vd_n)
-        system.REGF2.set(src='vq', attr='v', idx=uid, value=vq_n)
-        system.REGF2.set(src='Id', attr='v', idx=uid, value=Id_n)
-        system.REGF2.set(src='Iq', attr='v', idx=uid, value=Iq_n)
-        """
-
         
         # calculate noise on Psen_y
         Pe_noisy = Id_n * vd_n + Iq_n * vq_n

@@ -13,9 +13,9 @@ andes.config_logger(stream_level=30)
 
 STEP_TIME = 0.01
 
-def calculate_inertia_timeseries(ss, power_tms, freq_tms,p_ref, rocof_tms, window=20):
+def calculate_inertia_timeseries(ss, power_tms, freq_tms, p_ref, rocof_tms, window=20):
     deltaP = power_tms.subtract(p_ref)
-    deltaF = freq_tms.subtract(1)
+    deltaF = freq_tms - 1
 
     tds_df = pd.concat([deltaP, deltaF, rocof_tms], axis=1)
     tds_df.columns = ["Delta P (pu)", "Delta F (pu)", "RoCoF (pu)"]
@@ -95,8 +95,8 @@ def calculate_metrics(ss, record_H=True):
     window = 20 # Baruzzi et al. used 1 window = 20 steps
 
     # get needed timeseries
-    freq_timeseries = ss.TDS.get_timeseries(ss.BusFreq.f).loc[:,"BusFreq_1"]
-    rocof_timeseries = calculate_rocof(freq_timeseries) # df/dt
+    freq_timeseries = ss.TDS.get_timeseries(ss.BusROCOF.f)
+    rocof_timeseries = ss.TDS.get_timeseries(ss.BusROCOF.Wf_y) # df/dt
     power_timeseries = ss.TDS.get_timeseries(ss.REGF2.Pe)
 
     # initial metrics calculation
