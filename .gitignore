@@ -2,6 +2,6 @@
 andes_env/
 out/
 archive/
-regf2_testbench_out.*
 __pycache__/
 *.pyc
+*_out.*

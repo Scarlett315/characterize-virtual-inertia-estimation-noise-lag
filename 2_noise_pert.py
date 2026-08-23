@@ -91,15 +91,15 @@ def pert(t, system):
         Pe_noisy = Id_n * vd_n + Iq_n * vq_n
 
         decay = np.exp(-dt / Tr)
-        old_y = system.REGF2.get(src='Pe', attr='v', idx=uid)
+        old_y = system.REGF2.get(src='Psen_y', attr='v', idx=uid)
 
 
         # ---------------- manually calculate Psen_y -------------------
         Psen_y_noise = np.clip(Pe_noisy * (1 - decay), -0.5, 0.5)
         Psen_y_noisy = old_y * decay + Psen_y_noise
-        print(f"Old value: {old_y}", flush=True)
-        print(f"Psen_y_noise: {Psen_y_noise}", flush=True)
-        print(f"state: {_state}")
+        #print(f"Old value: {old_y}", flush=True)
+        #print(f"Psen_y_noisy: {Psen_y_noisy}", flush=True)
+        #print(f"state: {_state}")
 
         system.REGF2.set(src='Psen_y', attr='v', idx=uid, value=Psen_y_noisy)
 

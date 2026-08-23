@@ -5,6 +5,7 @@ from liu_inertia_estimation import calc_inertia
 from statsmodels.tools.eval_measures import rmse
 
 STEP_TIME = 0.01
+DIST_TIME = 5
 
 def calculate_metrics(ss, record_M=True):
     tf = ss.TDS.config.tf # end time
@@ -49,7 +50,7 @@ def calculate_metrics(ss, record_M=True):
     M_t = ivp_res.loc[:,"M"]
     settling_time = calc_settling_time(ivp_res, "M")
 
-    error = calculate_inertia_rmse(ss, M_t, 1)
+    error = calculate_inertia_rmse(ss, M_t, DIST_TIME)
 
     # add to metrics dataframe
     row = [tr, p_ref, peak_inertial_power, p_avail, error, max_rocof, freq_nadir, settling_time]
