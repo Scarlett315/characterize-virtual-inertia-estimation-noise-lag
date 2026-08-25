@@ -1,30 +1,14 @@
 
 import numpy as np
 import pandas as pd
-from liu_inertia_estimation import calc_inertia
 from statsmodels.tools.eval_measures import rmse
 
-STEP_TIME = 0.01
+from liu_inertia_estimation import calc_inertia
+from algebraic_inertia_estimation import calc_inertia_algebraic
+
 DIST_TIME = 5
 
-def calculate_metrics(ss, record_M=True):
-    tf = ss.TDS.config.tf # end time
-
-    # ----- create empty dataframes -----
-    metrics_df = pd.DataFrame({
-        "Tr (s)": [], 
-        "Pref": [],
-        "Peak Inertial Power": [],
-        "Power Available":[],
-        "M_RMSE (s)": [],
-        "Max RoCoF":[],
-        "Nadir":[],
-        "Settling Time (s)":[]
-    })
-
-    # save a few time-series for visualization
-    M_series = pd.DataFrame({
-    })
+def calculate_metrics(ss, metrics_df, M_series, record_M=True):
 
     # ----- calculations -----
 
@@ -46,14 +30,13 @@ def calculate_metrics(ss, record_M=True):
     p_ref = ss.PV.get("p0", 1) # pu
 
     # calculate inertia metrics
-    ivp_res = calc_inertia(tds_df, tf)
-    M_t = ivp_res.loc[:,"M"]
-    settling_time = calc_settling_time(ivp_res, "M")
+    M_t = calc_inertia_algebraic(tds_df, p_ref)
+    #settling_time = calc_settling_time(ivp_res, "M")
 
-    error = calculate_inertia_rmse(ss, M_t, DIST_TIME)
+    error = calculate_inertia_rmse(ss, M_t, DIST_TIME + 0.2)
 
     # add to metrics dataframe
-    row = [tr, p_ref, peak_inertial_power, p_avail, error, max_rocof, freq_nadir, settling_time]
+    row = [tr, p_ref, peak_inertial_power, p_avail, error, max_rocof, freq_nadir]
     metrics_df.loc[len(metrics_df)] = row
 
     # add H timeseries (for a few select values of Tr)
@@ -61,6 +44,49 @@ def calculate_metrics(ss, record_M=True):
         M_series.loc[:,tr] = M_t
 
     return metrics_df, M_series
+
+
+
+def calculate_metrics_ret(ss):   
+
+    # ----- calculations -----
+
+    tr = ss.REGF2.get("Tr", 1)
+
+    # get needed timeseries
+    freq_timeseries = ss.TDS.get_timeseries(ss.BusROCOF.f)
+    rocof_timeseries = ss.TDS.get_timeseries(ss.BusROCOF.Wf_y) # df/dt
+    power_timeseries = ss.TDS.get_timeseries(ss.REGF2.Pe)
+
+    tds_df = pd.concat([freq_timeseries, rocof_timeseries, power_timeseries], axis=1)
+    tds_df.columns = ["f", "df/dt", "p"]
+
+    # initial metrics calculation
+    peak_inertial_power = np.max(power_timeseries) 
+    max_rocof = np.max(np.abs(rocof_timeseries))
+    freq_nadir = np.min(freq_timeseries)
+    p_avail = ss.REGF2.get("Pmax", 1) # pu
+    p_ref = ss.PV.get("p0", 1) # pu
+
+    # calculate inertia metrics
+    M_t = calc_inertia_algebraic(tds_df, p_ref)
+    #settling_time = calc_settling_time(ivp_res, "M")
+
+    error = calculate_inertia_rmse(ss, M_t, DIST_TIME + 0.3)
+
+    # add to metrics dataframe
+    row = pd.DataFrame({
+        "Tr (s)": [tr], 
+        "Seed": [None], # fake :>
+        "Pref": [p_ref], 
+        "Peak Inertial Power": [peak_inertial_power], 
+        "Power Available":[p_avail], 
+        "H_RMSE (s)":[error], 
+        "Max RoCoF":  [max_rocof], 
+        "Nadir": [freq_nadir]
+    })
+
+    return row, M_t
 
 
 def calc_settling_time(df, var, threshold=0.05):

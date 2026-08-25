@@ -4,7 +4,7 @@ A pert file template.
 import traceback
 import numpy as np
 
-rng = np.random.default_rng(42)
+rng = None
 _state = {'last_t': None, 
           'ou_vd': 0.0, 
           'ou_vq': 0.0,
@@ -13,9 +13,17 @@ _state = {'last_t': None,
 
 
 #SIGMA_V, SIGMA_I, TAU_OU = 0.008, 0.02, 0.2
-STEP_TIME = 0.01 # 10 ms
-SIGMA_V, SIGMA_I, TAU_OU = 0.008, 0.008, 0.2  # deviations
+STEP_TIME = 0.001 # 10 ms
+SIGMA_V, SIGMA_I, TAU_OU = 0.3, 0.3, 0.001  # deviations + time-step 
 
+
+# reset
+def set_seed(seed):
+    global rng, _state
+    rng = np.random.default_rng(seed)
+    _state = {'last_t': None, 'ou_vd': 0.0, 'ou_vq': 0.0, 'ou_id': 0.0, 'ou_iq': 0.0}
+
+    print(f"rng set to: {seed}")
 
 # Orenstein-Uhlenbeck Simulation 
 def ou_step(x, dt, tau, sigma):
@@ -67,7 +75,7 @@ def pert(t, system):
         _state['last_grid_t'] = grid_t
         dt = STEP_TIME                  # known exactly, since steps are fixed
 
-        print(f"pert() applied at grid_t={grid_t}", flush=True)
+        #print(f"pert() applied at grid_t={grid_t}, TAU = {TAU_OU}", flush=True)
         
         # ------------------ noise computation -------------------
         Tr = system.REGF2.get(src='Tr', attr='v', idx=uid)
