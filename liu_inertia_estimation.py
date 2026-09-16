@@ -1,67 +1,134 @@
-from scipy.integrate import solve_ivp
-from scipy.interpolate import CubicSpline
-
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
-import andes
+import matplotlib.pyplot as plt
 
-andes.config_logger(stream_level=30)
+# ---------------- default parameters -----------------
+KP_FILT_def, KI_FILT_def, TF_FILT_def = 50.0, 1.0, 1e-4   # Liu et al. Fig. 3, unmodified
 
-# ---- constants -------
-TM = 0.104
-TD = 10e-4
 
-eps_x = 10e-5
-eps_w = 10e-5
+EPS_O_def = 1e-6
+T_M_def = 0.001    # paper's VSG-case default
+EPS_OMEGADOT_def = 1e-6
+T_M2_def, T_D2_def = 0.001, 1e-4   # paper's VSG-case defaults
+EPS_DOMEGA_def = 1e-6
 
-# deadband
-def gamma(x, eps):
-    return np.where(x >= eps, -1.0, np.where(x <= -eps, 1.0, 0.0))
+# ---------------- Utils (PI Filter & gamma!) ------------------
 
-# ---- calculate inertia ------
-def calc_inertia(tds_df, tf):
-    """
-    Adapted from Liu et al. "On-Line Inertia Estimation for Synchronous and Non-Synchronous Devices", specifically their E2 method, which takes into account the controller's damping and primary frequency control. 
-    This helps to remove oscillations in their estimated inertia. 
+def pi_filter(u, dt_arr, Kp=KP_FILT_def, Ki=KI_FILT_def, Tf=TF_FILT_def):
+    """PI pre-filter: smooths RoCoF (u) into a filtered RoCoF (x2) and a
+    filtered RoCoCoF (x1), replacing naive double np.gradient."""
+    x1, x2 = np.zeros(len(u)), np.zeros(len(u))
+    for i in range(1, len(u)):
+        dt = dt_arr[i]
+        denom = 1 + dt / Tf + dt ** 2 * Kp * Ki / Tf
+        x1[i] = (x1[i - 1] + dt * (Kp / Tf) * (u[i] - x2[i - 1])) / denom
+        x2[i] = x2[i - 1] + dt * Ki * x1[i]
+    return x2, x1
 
-    tds_df should include cols "df/dt" and "p" with simulation time as the index.
+
+def run_pi_filter(t_est, omega_fdf, KP_FILT=KP_FILT_def, KI_FILT=KI_FILT_def, TF_FILT=TF_FILT_def):
+    dt_arr = np.diff(t_est, prepend=t_est[0])
+    domega_dt_raw = np.gradient(omega_fdf, t_est)
+
+    domega_dt, d2omega_dt2 = pi_filter(domega_dt_raw, dt_arr, KP_FILT, KI_FILT, TF_FILT)
+    return domega_dt, d2omega_dt2
+
+def lowpass_filter(u, dt_arr, tau):
+    y = np.zeros(len(u))
+    for i in range(1, len(u)):
+        a = dt_arr[i] / tau
+        y[i] = (y[i-1] + a * u[i]) / (1 + a)
+
+    return y, (u - y) / tau
+
+
+
+def gamma(x, eps_x):
+    return np.where(x >= eps_x, -1.0, np.where(x <= -eps_x, 1.0, 0.0))
+
+# ---------------- E0, E1, and E2 estimators -------------
+def run_E0(dp_dt, omega_ddot, eps_o=EPS_OMEGADOT_def):
+    """Direct division. Holds the previous value when the denominator
+    is too small to divide by."""
+    M = np.zeros(len(dp_dt))
+    for i in range(len(dp_dt)):
+        if abs(omega_ddot[i]) >= eps_o:
+            M[i] = -dp_dt[i] / omega_ddot[i]
+        else:
+            M[i] = M[i - 1] if i > 0 else 0.0
+    return M
+
+
+def run_E1(dp_dt, omega_ddot, t, T_M=T_M_def, eps=EPS_OMEGADOT_def):
+    """Gated integration, backward Euler."""
+    M = np.zeros(len(t))
+    for i in range(1, len(t)):
+        dt_i = t[i] - t[i - 1]
+        g = gamma(omega_ddot[i], eps)
+        a = g * dp_dt[i] / T_M
+        b = g * omega_ddot[i] / T_M
+        M[i] = (M[i - 1] + dt_i * a) / (1 - dt_i * b)
+    return M
+
+
+def run_E2(dp_dt, omega_dot, omega_ddot, delta_omega, delta_p, t,
+           T_M=T_M2_def, T_D=T_D2_def, eps=EPS_OMEGADOT_def):
+    """Coupled 2x2 solve for M and D. Only M is used by this study."""
+    M, D = np.zeros(len(t)), np.zeros(len(t))
+    for i in range(1, len(t)):
+        dt_i = t[i] - t[i - 1]
+        gM, gD = gamma(omega_ddot[i], eps), gamma(delta_omega[i], eps)
+        A, B, C = gM * dp_dt[i] / T_M, gM * omega_ddot[i] / T_M, gM * omega_dot[i] / T_M
+        E, F, G = gD * delta_p[i] / T_D, gD * omega_dot[i] / T_D, gD * delta_omega[i] / T_D
+        m11, m12, m21, m22 = 1 - dt_i * B, -dt_i * C, -dt_i * F, 1 - dt_i * G
+        r1, r2 = M[i - 1] + dt_i * A, D[i - 1] + dt_i * E
+        det = m11 * m22 - m12 * m21
+        M[i] = (r1 * m22 - m12 * r2) / det
+        D[i] = (m11 * r2 - r1 * m21) / det
+    return M, D
+
+# --------------- run all 3! ----------------
+def run_all_estimators(omega, p, t, tau, noise=None):
+    dt_arr = np.diff(t, prepend=t[0])
+    dp_dt = np.gradient(p, t)
+
+    rocof_raw = np.gradient(omega, t)
+    # addition of noise to RoCoF signal
+    if noise is not None:
+        rocof_raw += noise
+
+    # lowpass filter
+    rocof, rocof_dot = lowpass_filter(rocof_raw, dt_arr, tau)
+
+    # delta P
+    delta_p = p - p[0]
+
+    # run all 3 estimators 
+    delta_omega = np.concatenate([[0.0], np.cumsum((rocof[1:] + rocof[:-1]) / 2 * np.diff(t))])
     
-    Returns time-series dataframe with each variable.
-    """
+    M_E0 = run_E0(dp_dt, rocof_dot)
+    M_E1 = run_E1(dp_dt, rocof_dot, t)
+    M_E2, _ = run_E2(dp_dt, rocof, rocof_dot, delta_omega, delta_p, t)
 
-    # solver function
-    def rhs(t, y, TM, TD, eps_x, eps_w):
-        Mstar, Dstar, domega_int, dp_int = y
+    return {'E0': M_E0 / 2, 'E1': M_E1 / 2, 'E2': M_E2 / 2}
 
-        dp = dp_dt(t)
-        d2w = d2omega_dt2(t)
-        dw = domega_dt(t)
+# ------------------- Visualizations ------------------
+def vis_est_inertia(t_est, H_est, H_true, title, xlim=None, ylim=None):
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(t_est, H_est, '.', markersize=2, color='tab:blue')
+    ax.axhline(H_true, color='k', linewidth=1.2, linestyle='--', label=f'H_true = {H_true} s')
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Estimated H (s)')
+    ax.set_title(title)
+    ax.legend(loc='best')
 
-        dMstar = gamma(d2w, eps_x) * (dp - Mstar*d2w - Dstar*dw) / TM
-        dDstar = gamma(domega_int, eps_w) * (dp_int - Mstar*dw - Dstar*domega_int) / TD
-        ddomega_int = dw     
-        ddp_int = dp  
-    
-        return [dMstar, dDstar, ddomega_int, ddp_int]
+    if xlim != None:
+        ax.set_xlim(xlim)
 
-    # calculate RoCoF, derivative of RoCoF (RoRoCOF?? lol), and derivative of power (RoCoP)
-    # need to interpolate between values b/c continuous-- called by solver
+    if ylim != None:
+            ax.set_ylim(ylim)
 
-    domega_dt = CubicSpline(tds_df.index, tds_df.loc[:,"df/dt"])      
-    d2omega_dt2 = domega_dt.derivative()               
-    dp_dt = CubicSpline(tds_df.index, tds_df.loc[:,"p"]).derivative()
+    plt.tight_layout()
+    plt.show()
 
-    # solve ivp
-    sol = solve_ivp(rhs, [0, tf], y0=[0, 0, 0, 0],
-                 args=(TM, TD, eps_x, eps_w),
-                 method='Radau', dense_output=True,
-                 t_eval=tds_df.index)
-
-    # formatting
-    vals_df = pd.DataFrame(sol.y[:2]).T
-    vals_df.index = sol.t
-    vals_df.columns = ["M", "D"]
-
-    return vals_df
-
+    return True
